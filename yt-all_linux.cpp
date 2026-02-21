@@ -6,13 +6,6 @@
 #include <regex>
 #include <opencv2/opencv.hpp>
 #include <webp/decode.h>
-//#include <limits>
-
-/*#define STB_IMAGE_IMPLEMENTATION
-#include "lib/stb_image.h"
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "lib/std_image_write.h"*/
-
 #include "lib/json.hpp"
 #include <curl/curl.h>
 #include <filesystem>
@@ -184,7 +177,7 @@ void add_flac_cover(const std::string& _flac_path, const std::string& _cover_pat
         "-metadata:s:v title=\"Album cover\" "
         "-metadata:s:v comment=\"Cover (front)\" "
         "-y \"" + _new_flac_path + "\"";
-    system(command.c_str());
+    system(command.c_str());e
     std::remove(_flac_path.c_str());
     std::rename(_new_flac_path.c_str(), _flac_path.c_str());
     return;
@@ -279,15 +272,12 @@ int main() {
                 _loop = true;
                 break;
             case '3':
-                
                 _loop = true;
                 break;
             case '4':
-                
                 _loop = true;
                 break;
             case '5':
-                
                 _loop = true;
                 break;
             case '6':
