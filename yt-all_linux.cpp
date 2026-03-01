@@ -56,12 +56,9 @@ cv::Mat decodeWebP(const std::string& path) {
         std::cerr << "Failed to decode WebP: " << path << std::endl;
         return cv::Mat();
     }
-
     cv::Mat rgba(h, w, CV_8UC4, data);
-
     cv::Mat bgr;
     cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
-
     WebPFree(data);
     return bgr;
 }
@@ -156,8 +153,17 @@ bool downloadFileCurl(const std::string& url) {
 std::string yt_getinfo(const std::string& _in) {
     std::string command = "yt-dlp --skip-download --write-info-json --quiet -o \"raw\" " + _in; // Output to "raw.info.json" file
     system(command.c_str());
-    std::ifstream _json(".//raw.info.json");
-    if (_json.is_open()) { std::string line; while (std::getline(_json, line)) { _rawinfo += line + "\n"; } _json.close(); }
+    
+    std::ifstream _json("raw.info.json");
+    if (_json.is_open()) {
+        std::ostringstream ss;
+        ss << _json.rdbuf();
+        _rawinfo = ss.str();
+        _json.close();
+    } else {
+        std::cerr << "Error: Could not open raw.info.json" << std::endl;
+    }
+
     return _rawinfo;
 }
 
@@ -177,7 +183,7 @@ void add_flac_cover(const std::string& _flac_path, const std::string& _cover_pat
         "-metadata:s:v title=\"Album cover\" "
         "-metadata:s:v comment=\"Cover (front)\" "
         "-y \"" + _new_flac_path + "\"";
-    system(command.c_str());e
+    system(command.c_str());
     std::remove(_flac_path.c_str());
     std::rename(_new_flac_path.c_str(), _flac_path.c_str());
     return;
@@ -186,11 +192,6 @@ void add_flac_cover(const std::string& _flac_path, const std::string& _cover_pat
 void sel_1() {
     std::cout << "Enter youtube link: ";
     std::cin >> _ytlink;
-    if (_ytlink == "") { 
-        std::cout << "Err: Null Link" << std::endl << std::endl;
-        return;
-    }
-
     std::cout << std::endl;
 
     _rawjson = yt_getinfo(_ytlink);
@@ -216,7 +217,6 @@ void sel_1() {
     std::cout << "Image Link: " << _yt_jsoninfo["thumbnail"] << std::endl << std::endl;
     std::cout << "Output File: " << _out << std::endl << std::endl;
 
-    // Clear Temp Files
     std::remove(_raw_thumb.c_str());
     std::remove("raw_thumb.png");
     std::remove("thumb.png");
@@ -225,9 +225,32 @@ void sel_1() {
 }
 
 void sel_2() {
-    std::cout << "Enter youtube link: " << std::endl;
-    std::getline(std::cin, _ytlink);
-    std::cout << "You selected option 2 with link: " << _ytlink << std::endl;
+    std::cout << "Enter youtube link: ";
+    std::cin >> _ytlink;
+    std::cout << std::endl;
+
+    _rawjson = yt_getinfo(_ytlink);
+    _yt_jsoninfo = json::parse(_rawjson);
+    _yt_jsoninfo["title"] = safe_filename(_yt_jsoninfo["title"]);
+
+    std::string raw_flac = _yt_jsoninfo["title"];
+    _flac_file = raw_flac + ".flac";
+
+    yt_getflac(_ytlink);
+
+    std::filesystem::path _out = _opt_folder / _flac_file;
+    std::filesystem::copy(_flac_file, _out, std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::remove(_flac_file);
+
+    std::cout << std::endl;
+    std::cout << "Title: " << _yt_jsoninfo["title"] << std::endl;
+    std::cout << "Image Link: " << _yt_jsoninfo["thumbnail"] << std::endl << std::endl;
+    std::cout << "Output File: " << _out << std::endl << std::endl;
+
+    std::remove(_raw_thumb.c_str());
+    std::remove("raw_thumb.png");
+    std::remove("thumb.png");
+    std::remove("raw.info.json");
     return;
 }
 
@@ -236,14 +259,14 @@ void init() {
     if (!(std::filesystem::exists(_opt_folder) && std::filesystem::is_directory(_opt_folder))) {
         std::filesystem::create_directories(_opt_folder);
     }
-
+    
     return;
 }
 
 int main() {
     init();
 
-    std::string disp = 
+    std::string disp =
         "=====================================================\n"
         "    YouTube .Flac Audio Downloader (All)\n"
         "=====================================================\n"
@@ -289,7 +312,6 @@ int main() {
                 break;
         }
         clear_data();
-	//std::cout << "\033[2J\033[H";
     }
     return 0;
 }
