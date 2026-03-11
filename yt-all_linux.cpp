@@ -6,7 +6,7 @@
 #include <regex>
 #include <opencv2/opencv.hpp>
 #include <webp/decode.h>
-#include "lib/json.hpp"
+#include "include/json.hpp"
 #include <curl/curl.h>
 #include <filesystem>
 
@@ -29,6 +29,36 @@ std::string yt_getinfo();
 void sel_1();
 void sel_2();
 int main();
+
+std::string check_ytlink(const std::string& _in) {
+    std::string _in_mgmt = "";
+    if (_in.find("youtu.be/") != std::string::npos) {
+        std::cout << "Type: Youtube Share Link." << std::endl;
+        for (int i = 0; i < _in.size(); i++) {
+            if (_in[i] == '?') {
+                break;
+            }
+            _in_mgmt += _in[i];
+        }
+    } else if (_in.find("youtube.com/watch?v=") != std::string::npos) {
+        if (_in.find("music.youtube.com/watch?v") != std::string::npos) {
+            std::cout << "Type: Youtube Music Link." << std::endl;
+        } else {
+            std::cout << "Type: Youtube Link." << std::endl;
+        }
+        for (int i = 0; i < _in.size(); i++) {
+            if (_in[i] == '&') {
+                break;
+            }
+            _in_mgmt += _in[i];
+        }
+    } else {
+        std::cerr << "Err: Not A Youtube Link or broken Youtube Link. Plz try again." << std::endl;
+        _in_mgmt = "";
+    }
+
+    return _in_mgmt;
+}
 
 void clear_data() {
     _rawjson.clear();
@@ -152,7 +182,10 @@ bool downloadFileCurl(const std::string& url) {
 
 std::string yt_getinfo(const std::string& _in) {
     std::string command = "yt-dlp --skip-download --write-info-json --quiet -o \"raw\" " + _in; // Output to "raw.info.json" file
-    system(command.c_str());
+    if (system(command.c_str()) != 0) {
+        std::cerr << "Err: This yt link isn't video link or music link." << std::endl;
+        return "";
+    }
     
     std::ifstream _json("raw.info.json");
     if (_json.is_open()) {
@@ -162,6 +195,7 @@ std::string yt_getinfo(const std::string& _in) {
         _json.close();
     } else {
         std::cerr << "Error: Could not open raw.info.json" << std::endl;
+        return "";
     }
 
     return _rawinfo;
@@ -194,7 +228,17 @@ void sel_1() {
     std::cin >> _ytlink;
     std::cout << std::endl;
 
+    _ytlink = check_ytlink(_ytlink);
+
+    if (_ytlink == "") {
+        return;
+    }
+
     _rawjson = yt_getinfo(_ytlink);
+    if (_rawjson == "") {
+        return;
+    }
+
     _yt_jsoninfo = json::parse(_rawjson);
     _yt_jsoninfo["title"] = safe_filename(_yt_jsoninfo["title"]);
 
@@ -254,18 +298,31 @@ void sel_2() {
     return;
 }
 
-void init() {
+void sel_3() {
+    std::cout << "Enter youtube link: ";
+    std::cin >> _ytlink;
+    std::cout << std::endl;
 
-    if (!(std::filesystem::exists(_opt_folder) && std::filesystem::is_directory(_opt_folder))) {
-        std::filesystem::create_directories(_opt_folder);
-    }
-    
+    _rawjson = yt_getinfo(_ytlink);
+    _yt_jsoninfo = json::parse(_rawjson);
+    _yt_jsoninfo["title"] = safe_filename(_yt_jsoninfo["title"]);
+
+    std::string raw_flac = _yt_jsoninfo["title"];
+    _flac_file = raw_flac + ".flac";
+
+    downloadFileCurl(_yt_jsoninfo["thumbnail"]);
+    convertToPNG(_raw_thumb, "raw_thumb.png");
+    crop_to_square("raw_thumb.png", _thumb_file);
+
+    std::cout << std::endl;
+    std::cout << "Image Link: " << _yt_jsoninfo["thumbnail"] << std::endl << std::endl;
+
+    std::remove("raw_thumb.png");
+    std::remove("raw.info.json");
     return;
 }
 
-int main() {
-    init();
-
+int mainusr() {
     std::string disp =
         "=====================================================\n"
         "    YouTube .Flac Audio Downloader (All)\n"
@@ -288,19 +345,24 @@ int main() {
         switch (_in) {
             case '1':
                 sel_1();
-		_loop = true;
+                std::cout << std::endl;
+		        _loop = true;
                 break;
             case '2':
                 sel_2();
+                std::cout << std::endl;
                 _loop = true;
                 break;
             case '3':
+                std::cout << std::endl;
                 _loop = true;
                 break;
             case '4':
+                std::cout << std::endl;
                 _loop = true;
                 break;
             case '5':
+                std::cout << std::endl;
                 _loop = true;
                 break;
             case '6':
@@ -313,5 +375,27 @@ int main() {
         }
         clear_data();
     }
+    return 0;
+}
+
+int main() {
+    std::cout << "Checking yt-dlp version..." << std::endl;
+    if (system("yt-dlp -U") != 0) {
+        std::cerr << "Err: Plz Install or Update yt-dlp" << std::endl;
+        return 1;
+    }
+
+    std::cout << std::endl << "Checking ffmpeg..." << std::endl;
+    if (system("ffmpeg -hide_banner -version") != 0) {
+        std::cerr << "Err: Plz Install or Update ffmpeg" << std::endl;
+        return 1;
+    }
+
+    std::cout << std::endl;
+
+    if (!(std::filesystem::exists(_opt_folder) && std::filesystem::is_directory(_opt_folder))) {
+        std::filesystem::create_directories(_opt_folder);
+    }
+    mainusr();
     return 0;
 }

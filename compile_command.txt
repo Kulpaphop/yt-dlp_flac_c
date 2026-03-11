@@ -1,0 +1,2 @@
+yt-all_linux.cpp: g++ yt-all_linux.cpp -o yt-all_linux -lcurl -lwebp `pkg-config --cflags --libs opencv4`
+
