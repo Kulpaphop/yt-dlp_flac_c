@@ -9,6 +9,8 @@
 #include "include/json.hpp"
 #include <curl/curl.h>
 #include <filesystem>
+#include <csignal>
+#include <atomic>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -17,7 +19,8 @@ std::string _rawjson = "";
 json _yt_jsoninfo;
 
 std::string _raw_thumb = "";
-const std::filesystem::path _opt_folder = std::filesystem::current_path() / "Output";
+const std::filesystem::path _working_folder = std::filesystem::current_path();
+const std::filesystem::path _opt_folder = _working_folder / "Output";
 const std::string _thumb_file = "thumb.png";
 std::string _flac_file = "";
 
@@ -25,10 +28,64 @@ std::string _ytlink = "";
 std::string _title = "";
 std::string _rawinfo = "";
 
+
+
+// --- PLATFORM SPECIFIC HEADERS ---
+#ifdef _WIN32
+    #include <windows.h>
+    #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
+    #endif
+    std::wstring to_wstring(const std::string& str) {
+        if (str.empty()) return L"";
+        int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+        std::wstring wstrTo(size_needed, 0);
+        MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+        return wstrTo;
+    }
+#endif
+void init_unicode_console() {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut != INVALID_HANDLE_VALUE) {
+        DWORD dwMode = 0;
+        if (GetConsoleMode(hOut, &dwMode)) {
+            dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(hOut, dwMode);
+        }
+    }
+#else
+#endif
+}
+// --- UNIVERSAL SYSTEM WRAPPER (Fixed Return Type) ---
+int run_system_utf8(const std::string& cmd) {
+#ifdef _WIN32
+    // Return the result of _wsystem so the 'if' statements work
+    return _wsystem(to_wstring(cmd).c_str());
+#else
+    // Return the result of standard system
+    return std::system(cmd.c_str());
+#endif
+}
+
+// --- REDIRECT system() TO OUR WRAPPER ---
+#undef system
+#define system(x) run_system_utf8(x)
+// --- PLATFORM SPECIFIC HEADERS ---
+
+
+
 std::string yt_getinfo();
 void sel_1();
 void sel_2();
 int main();
+
+std::atomic<bool> _keepRunning(true);
+void handleInterrupt(int signum) {
+    _keepRunning = false;
+}
 
 std::string check_ytlink(const std::string& _in) {
     std::string _in_mgmt = "";
@@ -56,7 +113,6 @@ std::string check_ytlink(const std::string& _in) {
         std::cerr << "Err: Not A Youtube Link or broken Youtube Link. Plz try again." << std::endl;
         _in_mgmt = "";
     }
-
     return _in_mgmt;
 }
 
@@ -70,6 +126,14 @@ void clear_data() {
     _rawinfo.clear();
 }
 
+void tmp_delete() {
+    namespace fs = std::filesystem;
+    if (fs::exists(_raw_thumb.c_str())) std::filesystem::remove(_raw_thumb.c_str());
+    if (fs::exists("raw_thumb.png")) std::filesystem::remove("raw_thumb.png");
+    if (fs::exists("thumb.png")) std::filesystem::remove("thumb.png");
+    if (fs::exists("raw.info.json")) std::filesystem::remove("raw.info.json");
+}
+
 std::string safe_filename(const std::string& s) {
     static const std::regex pattern(R"([<>:\"/\\|?*])");
     return std::regex_replace(s, pattern, "_");
@@ -77,9 +141,7 @@ std::string safe_filename(const std::string& s) {
 
 cv::Mat decodeWebP(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
-    std::vector<uint8_t> buffer((std::istreambuf_iterator<char>(file)),
-                                 std::istreambuf_iterator<char>());
-
+    std::vector<uint8_t> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     int w = 0, h = 0;
     uint8_t* data = WebPDecodeRGBA(buffer.data(), buffer.size(), &w, &h);
     if (!data) {
@@ -95,53 +157,43 @@ cv::Mat decodeWebP(const std::string& path) {
 
 bool convertToPNG(const std::string& inputPath, const std::string& outputPath) {
     cv::Mat image;
-
     if (inputPath.size() >= 5 &&
         inputPath.substr(inputPath.size() - 5) == ".webp") {
         image = decodeWebP(inputPath);
     } else {
         image = cv::imread(inputPath, cv::IMREAD_UNCHANGED);
     }
-
     if (image.empty()) {
         std::cerr << "Error: Could not load image " << inputPath << std::endl;
         return false;
     }
-
     if (!cv::imwrite(outputPath, image)) {
         std::cerr << "Error: Could not save PNG " << outputPath << std::endl;
         return false;
     }
-
     std::cout << "Converted " << inputPath << " -> " << outputPath << std::endl;
     return true;
 }
 
 void crop_to_square(const std::string& image_path, const std::string& output_path) {
     cv::Mat image;
-
     if (image_path.size() >= 5 &&
         image_path.substr(image_path.size() - 5) == ".webp") {
         image = decodeWebP(image_path);
     } else {
         image = cv::imread(image_path);
     }
-
     if (image.empty()) {
         std::cerr << "Failed to load image: " << image_path << std::endl;
         return;
     }
-
     int width = image.cols;
     int height = image.rows;
     int target_size = std::min(width, height);
-
     int left = (width - target_size) / 2;
     int top  = (height - target_size) / 2;
-
     cv::Rect roi(left, top, target_size, target_size);
     cv::Mat cropped = image(roi);
-
     if (!cv::imwrite(output_path, cropped)) {
         std::cerr << "Error: Could not save cropped PNG " << output_path << std::endl;
     } else {
@@ -218,8 +270,15 @@ void add_flac_cover(const std::string& _flac_path, const std::string& _cover_pat
         "-metadata:s:v comment=\"Cover (front)\" "
         "-y \"" + _new_flac_path + "\"";
     system(command.c_str());
-    std::remove(_flac_path.c_str());
-    std::rename(_new_flac_path.c_str(), _flac_path.c_str());
+
+    
+    std::cout << "_flac_path: " << _flac_path << std::endl << std::endl;
+    std::cout << "_new_flac_path: " << _new_flac_path << std::endl << std::endl;
+
+    std::filesystem::path _flac_path_f = _working_folder / _flac_path;
+    std::filesystem::remove(_flac_path_f.c_str());
+    std::filesystem::path _new_flac_path_f = _working_folder / _new_flac_path;
+    std::filesystem::rename(_new_flac_path_f.c_str(), _flac_path.c_str());
     return;
 }
 
@@ -261,10 +320,7 @@ void sel_1() {
     std::cout << "Image Link: " << _yt_jsoninfo["thumbnail"] << std::endl << std::endl;
     std::cout << "Output File: " << _out << std::endl << std::endl;
 
-    std::remove(_raw_thumb.c_str());
-    std::remove("raw_thumb.png");
-    std::remove("thumb.png");
-    std::remove("raw.info.json");
+    tmp_delete();
     return;
 }
 
@@ -291,10 +347,7 @@ void sel_2() {
     std::cout << "Image Link: " << _yt_jsoninfo["thumbnail"] << std::endl << std::endl;
     std::cout << "Output File: " << _out << std::endl << std::endl;
 
-    std::remove(_raw_thumb.c_str());
-    std::remove("raw_thumb.png");
-    std::remove("thumb.png");
-    std::remove("raw.info.json");
+    tmp_delete();
     return;
 }
 
@@ -317,15 +370,16 @@ void sel_3() {
     std::cout << std::endl;
     std::cout << "Image Link: " << _yt_jsoninfo["thumbnail"] << std::endl << std::endl;
 
-    std::remove("raw_thumb.png");
-    std::remove("raw.info.json");
+    tmp_delete();
     return;
 }
 
-int mainusr() {
+void mainusr() {
+    std::signal(SIGINT, handleInterrupt);
+
     std::string disp =
         "=====================================================\n"
-        "    YouTube .Flac Audio Downloader (All)\n"
+        "     YouTube .Flac Audio Downloader (All)\n"
         "=====================================================\n"
         "[1] Download as FLAC with thumbnail (i.ytimg.com)\n"
         "[2] Download as FLAC without thumbnail\n"
@@ -336,49 +390,39 @@ int mainusr() {
         "=====================================================\n";
 
     char _in = '7';
-    bool _loop = true;
-    while (_loop) {
+    while (_keepRunning) {
         std::cout << disp << std::endl;
         std::cout << "Enter Number: ";
-        std::cin >> _in;
-        if (sizeof(_in) > 1) continue;
+
+        if (!(std::cin >> _in)) break; 
+
         switch (_in) {
             case '1':
                 sel_1();
-                std::cout << std::endl;
-		        _loop = true;
                 break;
             case '2':
                 sel_2();
-                std::cout << std::endl;
-                _loop = true;
                 break;
             case '3':
-                std::cout << std::endl;
-                _loop = true;
-                break;
-            case '4':
-                std::cout << std::endl;
-                _loop = true;
-                break;
-            case '5':
-                std::cout << std::endl;
-                _loop = true;
+                // sel_3(); logic here
                 break;
             case '6':
-                std::cout << "Exiting the program." << std::endl;
-                _loop = false;
+                _keepRunning = false;
                 break;
             default:
-                _loop = true;
+                std::cout << "Invalid option." << std::endl;
                 break;
         }
-        clear_data();
+        
+        if (_keepRunning) {
+            clear_data();
+        }
     }
-    return 0;
+    std::cout << "\nExiting Program." << std::endl;
 }
 
 int main() {
+    init_unicode_console(); // For Fixing std::string
     std::cout << "Checking yt-dlp version..." << std::endl;
     if (system("yt-dlp -U") != 0) {
         std::cerr << "Err: Plz Install or Update yt-dlp" << std::endl;
@@ -396,6 +440,9 @@ int main() {
     if (!(std::filesystem::exists(_opt_folder) && std::filesystem::is_directory(_opt_folder))) {
         std::filesystem::create_directories(_opt_folder);
     }
+    
+    tmp_delete();
+
     mainusr();
     return 0;
 }
